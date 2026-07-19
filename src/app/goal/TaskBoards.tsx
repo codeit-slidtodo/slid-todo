@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import {  useState } from 'react';
 import { IconCalendar } from '../../components/IconCalendar';
 import { IconPlus } from '../../components/IconPlus';
 import { TaskItem } from './TaskItem';
@@ -60,9 +60,9 @@ export function TaskBoards({
           </h2>
           <button
             type="button"
-            className="border-bg-card text-foreground/80 hover:bg-background inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            className="border-[#cccccc] text-foreground/80 hover:bg-background inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
           >
-            <IconCalendar className="text-primary h-4 w-4" />
+            <IconCalendar className="text-[#cccccc] h-4 w-4" />캘린더 보기
           </button>
           <button
             type="button"
