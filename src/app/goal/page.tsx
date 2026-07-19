@@ -1,36 +1,240 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { ensureAuth } from '@/lib/auth';
+import { del, get, patch, post } from '@/lib/api';
 import { Task, TaskBoards } from './TaskBoards';
 import { GoalSummaryCards } from './GoalSummaryCards';
 
-const TODOS: Task[] = [
-  { id: 't1', title: '사용자 데이터 렌더링 구현', done: false },
-  { id: 't2', title: '자바스크립트 기초 챕터 3 듣기', done: false },
-  { id: 't3', title: '개발 폴더 구조 세팅하기', done: false },
-  { id: 't4', title: 'API 연동 테스트', done: false },
-  { id: 't5', title: '로그인 페이지 UI 잡기', done: false },
-];
+type User = {
+  id: number;
+  name: string;
+};
 
-const DONES: Task[] = [
-  { id: 'd1', title: '프로젝트 기획서 작성', done: true },
-  { id: 'd2', title: 'Figma 와이어프레임 완성', done: true },
-  { id: 'd3', title: 'Next.js 프로젝트 세팅', done: true },
-  { id: 'd4', title: '공통 레이아웃 잡기', done: true },
-];
+type GoalSummary = {
+  id: number;
+  title: string;
+};
+
+type ApiTodo = {
+  id: number;
+  title: string;
+  done: boolean;
+  isFavorite: boolean;
+};
+
+type GoalDetail = {
+  id: number;
+  title: string;
+  todos: ApiTodo[];
+};
+
+type GoalsResponse = {
+  goals: GoalSummary[];
+};
+
+function toTask(todo: ApiTodo): Task {
+  return {
+    id: String(todo.id),
+    title: todo.title,
+    done: todo.done,
+    starred: todo.isFavorite,
+  };
+}
+
+function splitTasks(tasks: Task[]) {
+  return {
+    todos: tasks.filter((task) => !task.done),
+    dones: tasks.filter((task) => task.done),
+    progress:
+      tasks.length > 0
+        ? Math.round((tasks.filter((task) => task.done).length / tasks.length) * 100)
+        : 0,
+  };
+}
 
 export default function GoalPage() {
+  const [userName, setUserName] = useState('');
+  const [goalId, setGoalId] = useState<number | null>(null);
+  const [goalTitle, setGoalTitle] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [todos, setTodos] = useState<Task[]>([]);
+  const [dones, setDones] = useState<Task[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const applyTasks = useCallback((tasks: Task[]) => {
+    const next = splitTasks(tasks);
+    setTodos(next.todos);
+    setDones(next.dones);
+    setProgress(next.progress);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGoal() {
+      try {
+        setLoading(true);
+        setError(null);
+        await ensureAuth();
+
+        const [userRes, goalsRes] = await Promise.all([
+          get('/users/me'),
+          get('/goals'),
+        ]);
+
+        if (!userRes.ok || !goalsRes.ok) {
+          throw new Error('목표 정보를 불러오지 못했습니다.');
+        }
+
+        const user = (await userRes.json()) as User;
+        const { goals } = (await goalsRes.json()) as GoalsResponse;
+        const firstGoal = goals[0];
+
+        if (!firstGoal) {
+          if (!cancelled) {
+            setUserName(user.name);
+            setGoalId(null);
+            setGoalTitle('');
+            applyTasks([]);
+          }
+          return;
+        }
+
+        const goalRes = await get(`/goals/${firstGoal.id}`);
+        if (!goalRes.ok) {
+          throw new Error('목표 상세를 불러오지 못했습니다.');
+        }
+
+        const goal = (await goalRes.json()) as GoalDetail;
+
+        if (!cancelled) {
+          setUserName(user.name);
+          setGoalId(goal.id);
+          setGoalTitle(goal.title);
+          applyTasks(goal.todos.map(toTask));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.',
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadGoal();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyTasks]);
+
+  const allTasks = [...todos, ...dones];
+
+  const handleAddTodo = async (title: string) => {
+    if (!goalId) return;
+
+    const res = await post('/todos', { title, goalId });
+    if (!res.ok) {
+      setActionError('할 일 추가에 실패했습니다.');
+      return;
+    }
+
+    const created = (await res.json()) as ApiTodo;
+    setActionError(null);
+    applyTasks([toTask(created), ...allTasks]);
+  };
+
+  const handleToggleDone = async (task: Task) => {
+    setBusyId(task.id);
+    try {
+      const res = await patch(`/todos/${task.id}`, { done: !task.done });
+      if (!res.ok) {
+        setActionError('할 일 상태 변경에 실패했습니다.');
+        return;
+      }
+      const updated = (await res.json()) as ApiTodo;
+      setActionError(null);
+      applyTasks(
+        allTasks.map((item) => (item.id === task.id ? toTask(updated) : item)),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleEditTodo = async (task: Task, title: string) => {
+    setBusyId(task.id);
+    try {
+      const res = await patch(`/todos/${task.id}`, { title });
+      if (!res.ok) {
+        setActionError('할 일 수정에 실패했습니다.');
+        return;
+      }
+      const updated = (await res.json()) as ApiTodo;
+      setActionError(null);
+      applyTasks(
+        allTasks.map((item) => (item.id === task.id ? toTask(updated) : item)),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDeleteTodo = async (task: Task) => {
+    if (!window.confirm(`"${task.title}" 할 일을 삭제할까요?`)) return;
+
+    setBusyId(task.id);
+    try {
+      const res = await del(`/todos/${task.id}`);
+      if (!res.ok) {
+        setActionError('할 일 삭제에 실패했습니다.');
+        return;
+      }
+      setActionError(null);
+      applyTasks(allTasks.filter((item) => item.id !== task.id));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <main className="mx-auto flex max-w-[1312px] flex-col gap-8 px-8 py-10">
       <section className="flex flex-col gap-4">
         <h2 className="text-foreground text-2xl font-bold tracking-tight">
-          체다치즈님의 목표
+          {userName ? `${userName}님의 목표` : '목표'}
         </h2>
-        <GoalSummaryCards
-          title="자바스크립트로 웹 서비스 만들기"
-          progress={64}
-        />
+        {loading ? (
+          <p className="text-muted text-sm">불러오는 중...</p>
+        ) : error ? (
+          <p className="text-sm text-red-500">{error}</p>
+        ) : goalTitle ? (
+          <GoalSummaryCards title={goalTitle} progress={progress} />
+        ) : (
+          <p className="text-muted text-sm">등록된 목표가 없습니다.</p>
+        )}
       </section>
-      <section>
-        <TaskBoards todos={TODOS} dones={DONES} />
-      </section>
+      {!loading && !error && goalId && (
+        <section className="flex flex-col gap-3">
+          {actionError && (
+            <p className="text-sm text-red-500">{actionError}</p>
+          )}
+          <TaskBoards
+            todos={todos}
+            dones={dones}
+            busyId={busyId}
+            onAddTodo={handleAddTodo}
+            onToggleDone={handleToggleDone}
+            onEditTodo={handleEditTodo}
+            onDeleteTodo={handleDeleteTodo}
+          />
+        </section>
+      )}
     </main>
   );
 }
