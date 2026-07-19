@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ensureAuth } from '@/lib/auth';
 import { del, get, patch, post } from '@/lib/api';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { Task, TaskBoards } from './TaskBoards';
 import { GoalSummaryCards } from './GoalSummaryCards';
 
@@ -64,6 +65,8 @@ export default function GoalPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const applyTasks = useCallback((tasks: Task[]) => {
     const next = splitTasks(tasks);
@@ -186,20 +189,32 @@ export default function GoalPage() {
     }
   };
 
-  const handleDeleteTodo = async (task: Task) => {
-    if (!window.confirm(`"${task.title}" 할 일을 삭제할까요?`)) return;
+  const handleDeleteTodo = (task: Task) => {
+    setTaskToDelete(task);
+  };
 
-    setBusyId(task.id);
+  const handleCancelDelete = useCallback(() => {
+    if (deleting) return;
+    setTaskToDelete(null);
+  }, [deleting]);
+
+  const handleConfirmDelete = async () => {
+    if (!taskToDelete) return;
+
+    setDeleting(true);
+    setBusyId(taskToDelete.id);
     try {
-      const res = await del(`/todos/${task.id}`);
+      const res = await del(`/todos/${taskToDelete.id}`);
       if (!res.ok) {
         setActionError('할 일 삭제에 실패했습니다.');
         return;
       }
       setActionError(null);
-      applyTasks(allTasks.filter((item) => item.id !== task.id));
+      applyTasks(allTasks.filter((item) => item.id !== taskToDelete.id));
+      setTaskToDelete(null);
     } finally {
       setBusyId(null);
+      setDeleting(false);
     }
   };
 
@@ -235,6 +250,13 @@ export default function GoalPage() {
           />
         </section>
       )}
+
+      <ConfirmModal
+        open={taskToDelete !== null}
+        confirming={deleting}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+      />
     </main>
   );
 }
