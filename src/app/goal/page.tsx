@@ -66,6 +66,7 @@ export default function GoalPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [goalDeleteOpen, setGoalDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const applyTasks = useCallback((tasks: Task[]) => {
@@ -193,27 +194,66 @@ export default function GoalPage() {
     setTaskToDelete(task);
   };
 
+  const handleEditGoal = async (title: string) => {
+    if (!goalId) return;
+
+    const res = await patch(`/goals/${goalId}`, { title });
+    if (!res.ok) {
+      setActionError('목표 수정에 실패했습니다.');
+      return;
+    }
+
+    const updated = (await res.json()) as GoalSummary;
+    setActionError(null);
+    setGoalTitle(updated.title);
+  };
+
+  const handleRequestDeleteGoal = () => {
+    setGoalDeleteOpen(true);
+  };
+
   const handleCancelDelete = useCallback(() => {
     if (deleting) return;
     setTaskToDelete(null);
+    setGoalDeleteOpen(false);
   }, [deleting]);
 
   const handleConfirmDelete = async () => {
-    if (!taskToDelete) return;
+    if (taskToDelete) {
+      setDeleting(true);
+      setBusyId(taskToDelete.id);
+      try {
+        const res = await del(`/todos/${taskToDelete.id}`);
+        if (!res.ok) {
+          setActionError('할 일 삭제에 실패했습니다.');
+          return;
+        }
+        setActionError(null);
+        applyTasks(allTasks.filter((item) => item.id !== taskToDelete.id));
+        setTaskToDelete(null);
+      } finally {
+        setBusyId(null);
+        setDeleting(false);
+      }
+      return;
+    }
+
+    if (!goalDeleteOpen || !goalId) return;
 
     setDeleting(true);
-    setBusyId(taskToDelete.id);
     try {
-      const res = await del(`/todos/${taskToDelete.id}`);
+      const res = await del(`/goals/${goalId}`);
       if (!res.ok) {
-        setActionError('할 일 삭제에 실패했습니다.');
+        setActionError('목표 삭제에 실패했습니다.');
         return;
       }
+
       setActionError(null);
-      applyTasks(allTasks.filter((item) => item.id !== taskToDelete.id));
-      setTaskToDelete(null);
+      setGoalDeleteOpen(false);
+      setGoalId(null);
+      setGoalTitle('');
+      applyTasks([]);
     } finally {
-      setBusyId(null);
       setDeleting(false);
     }
   };
@@ -229,7 +269,12 @@ export default function GoalPage() {
         ) : error ? (
           <p className="text-sm text-red-500">{error}</p>
         ) : goalTitle ? (
-          <GoalSummaryCards title={goalTitle} progress={progress} />
+          <GoalSummaryCards
+            title={goalTitle}
+            progress={progress}
+            onEdit={handleEditGoal}
+            onDelete={handleRequestDeleteGoal}
+          />
         ) : (
           <p className="text-muted text-sm">등록된 목표가 없습니다.</p>
         )}
@@ -252,8 +297,13 @@ export default function GoalPage() {
       )}
 
       <ConfirmModal
-        open={taskToDelete !== null}
+        open={taskToDelete !== null || goalDeleteOpen}
         confirming={deleting}
+        message={
+          goalDeleteOpen
+            ? '삭제된 목표는 복구할 수 없습니다.'
+            : '삭제된 할 일은 복구할 수 없습니다.'
+        }
         onCancel={handleCancelDelete}
         onConfirm={handleConfirmDelete}
       />
